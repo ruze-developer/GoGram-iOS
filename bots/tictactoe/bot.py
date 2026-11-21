@@ -60,7 +60,7 @@ def keyboard(game):
     if game["status"] == "waiting":
         return {"inline_keyboard": [[{"text":"➕ присоединиться (O)", "callback_data":f"tt:{gid}:join"}],
                                    [{"text":"✖ отменить", "callback_data":f"tt:{gid}:cancel"}]]}
-    if game["status"] == "done":
+    if game["status"] in ("done", "cancelled"):
         return {"inline_keyboard": [[{"text":"🔄 новая игра", "callback_data":f"tt:{gid}:again"}]]}
     cells = []
     for row in range(3):
