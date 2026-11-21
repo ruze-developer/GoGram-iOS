@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """GoGram Tic-Tac-Toe via OwpenGram Bot API. No external Python packages."""
+import getpass
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import random
 import secrets
 import signal
 import sqlite3
+import sys
 import time
 from contextlib import closing
 from urllib.error import HTTPError, URLError
@@ -258,7 +260,35 @@ def update(db,item):
     if "callback_query" in item:
         callback(db,item["callback_query"])
 
+def configure_connection():
+    """Ask for Bot API address and bot token in interactive mode.
+
+    In noninteractive services use environment variables instead.
+    """
+    global BASE, TOKEN
+    if sys.stdin.isatty():
+        print("=== GoGram Tic-Tac-Toe (.tt) ===")
+        entered_url = input(f"Bot API URL [{BASE}]: ").strip()
+        if entered_url:
+            BASE = entered_url.rstrip("/")
+        if TOKEN:
+            entered_token = getpass.getpass("Bot token [configured; Enter to keep]: ").strip()
+            if entered_token:
+                TOKEN = entered_token
+        else:
+            TOKEN = getpass.getpass("Bot token (hidden): ").strip()
+    if not BASE.startswith(("http://", "https://")) or "/bot" in BASE:
+        raise SystemExit("Bot API URL must be an origin like http://127.0.0.1:2500, without /botTOKEN")
+    if not TOKEN or ":" not in TOKEN:
+        raise SystemExit("Missing bot token. Set GOGRAM_BOT_TOKEN for systemd, or run in a terminal.")
+    if BASE.startswith("http://") and not (
+        BASE.startswith("http://127.0.0.1:") or BASE.startswith("http://localhost:")
+    ):
+        LOG.warning("Remote Bot API over HTTP exposes bot token; prefer a secure SSH tunnel or HTTPS")
+
+
 def main():
+    configure_connection()
     if not TOKEN or ":" not in TOKEN:
         raise SystemExit("Set GOGRAM_BOT_TOKEN from your OwpenGram bot creation")
     if not BASE.startswith("http://127.0.0.1:") and not BASE.startswith("http://localhost:"):
