@@ -35,6 +35,9 @@ jobs:
           cd /Users/Shared/telegram-ios
           cp "$GITHUB_WORKSPACE/gogram/branding.json" build-system/branding/branding.json
           python3 build-system/apply_branding.py build-system/branding/branding.json
+          # OwpenGram publishes the public RSA key and DC ID on its MTProto port.
+          # Fail if unreachable: do not ship an IPA that can only use official Telegram.
+          python3 "$GITHUB_WORKSPACE/gogram/embed_owpengram.py"
           python3 build-system/polysrv/apply_polysrv.py
       - name: Generate custom GoGram icon
         run: |
