@@ -1,109 +1,122 @@
-name: CI
-
+name: Build GoGram iOS IPA
 on:
   push:
-    branches: [ master ]
-
+    branches: [master]
+    paths: ['.github/workflows/build.yml', 'gogram/**']
   workflow_dispatch:
-
+permissions:
+  contents: read
 jobs:
   build:
-    runs-on: macos-13
-
+    runs-on: xcode-27
+    timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
-          fetch-depth: '0'
-
-      - name: Set active Xcode path
+          persist-credentials: false
+      - name: Checkout native iOS multiserver source
         run: |
-          XCODE_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["xcode"]);')
-          sudo xcode-select -s /Applications/Xcode_$XCODE_VERSION.app/Contents/Developer
-
-      - name: Create canonical source directory
-        run: |
-          set -x
+          set -euo pipefail
           sudo mkdir -p /Users/Shared
-          cp -R $GITHUB_WORKSPACE /Users/Shared/
-          mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
-
-      - name: Build the App
+          git clone --no-checkout https://github.com/roon9e/polysrv-ios.git /Users/Shared/telegram-ios
+          cd /Users/Shared/telegram-ios
+          git checkout 007c36f3d86f70a463d89e8cdbbc0a1d2f52148a
+          git submodule update --init --recursive --jobs 6
+      - name: Select Xcode
         run: |
-          set -x
-
-          # source code paths are included in the final binary, so we need to make them stable across builds
-          SOURCE_DIR=/Users/Shared/telegram-ios
-
-          # use canonical bazel root
-          BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
-
-          cd $SOURCE_DIR
-
-          BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
-
-          export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);')
-          export COMMIT_COUNT=$(git rev-list --count HEAD)
-          export COMMIT_COUNT="$(($COMMIT_COUNT+$BUILD_NUMBER_OFFSET))"
-          export BUILD_NUMBER="$COMMIT_COUNT"
-          echo "BUILD_NUMBER=$(echo $BUILD_NUMBER)" >> $GITHUB_ENV
-          echo "APP_VERSION=$(echo $APP_VERSION)" >> $GITHUB_ENV
-
+          set -euo pipefail
+          V=$(python3 -c 'import json;print(json.load(open("/Users/Shared/telegram-ios/versions.json"))["xcode"])')
+          test -d "/Applications/Xcode_$V.app" || { echo "::error::Missing required Xcode $V"; exit 1; }
+          sudo xcode-select -s "/Applications/Xcode_$V.app/Contents/Developer"
+          xcodebuild -version
+      - name: Apply GoGram branding and MTProto multiserver support
+        run: |
+          set -euo pipefail
+          cd /Users/Shared/telegram-ios
+          cp "$GITHUB_WORKSPACE/gogram/branding.json" build-system/branding/branding.json
+          python3 build-system/apply_branding.py build-system/branding/branding.json
+          python3 build-system/polysrv/apply_polysrv.py
+      - name: Generate custom GoGram icon
+        run: |
+          set -euo pipefail
+          cd /Users/Shared/telegram-ios
+          python3 -m pip install --upgrade --break-system-packages Pillow==11.3.0
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          im=Image.new('RGB',(1024,1024),'white')
+          d=ImageDraw.Draw(im)
+          d.rounded_rectangle((60,60,964,964),radius=214,fill='#2588ef')
+          d.rounded_rectangle((175,325,850,706),radius=155,fill='white')
+          d.polygon([(316,657),(263,815),(477,673)],fill='white')
+          try: font=ImageFont.truetype('/System/Library/Fonts/Supplemental/Arial Bold.ttf',310)
+          except OSError: font=ImageFont.load_default()
+          d.text((502,507),'G',font=font,fill='#2588ef',anchor='mm')
+          im.save('build-system/branding/logo.png',optimize=True)
+          PY
+          python3 build-system/generate_icons.py
+      - name: Inject optional API credentials
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          set -euo pipefail
+          cd /Users/Shared/telegram-ios
+          python3 - <<'PY'
+          import json, os
+          a=os.getenv('TELEGRAM_API_ID',''); h=os.getenv('TELEGRAM_API_HASH','')
+          if a and h:
+              p='build-system/appstore-configuration.json'
+              data=json.load(open(p))
+              data['api_id']=a; data['api_hash']=h
+              with open(p,'w') as f: json.dump(data,f,indent=2)
+              print('Custom Telegram API credentials injected')
+          else: print('Using upstream development config; set repository secrets for distribution')
+          PY
+      - name: Regenerate fake signing profiles
+        run: |
+          set -euo pipefail
+          cd /Users/Shared/telegram-ios
+          cp -R build-system/fake-codesigning/profiles build-system/fake-codesigning/profiles-backup
+          python3 build-system/Make/RegenerateProfilesForBundleId.py \
+            --configurationPath=build-system/appstore-configuration.json \
+            --sourceProfiles=build-system/fake-codesigning/profiles-backup \
+            --destinationProfiles=build-system/fake-codesigning/profiles \
+            --certsPath=build-system/fake-codesigning/certs
+      - name: Build native GoGram iOS
+        run: |
+          set -euo pipefail
+          cd /Users/Shared/telegram-ios
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
           python3 -u build-system/Make/Make.py \
-            --bazelUserRoot="$BAZEL_USER_ROOT" \
+            --bazelUserRoot=/private/var/tmp/_bazel_containerhost \
             build \
-            --configurationPath="build-system/appstore-configuration.json" \
+            --configurationPath=build-system/appstore-configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \
-            --buildNumber="$BUILD_NUMBER"
-
-          # collect ipa
-          OUTPUT_PATH="build/artifacts"
-          rm -rf "$OUTPUT_PATH"
-          mkdir -p "$OUTPUT_PATH"
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
-            cp "$f" $OUTPUT_PATH/
+            --buildNumber="$GITHUB_RUN_NUMBER"
+      - name: Verify and stage IPA
+        run: |
+          set -euo pipefail
+          cd /Users/Shared/telegram-ios
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          ipa=""
+          for file in bazel-bin/Telegram/Telegram.ipa bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
+            if [ -f "$file" ]; then ipa="$file"; break; fi
           done
-
-          # collect dsym
-          mkdir -p build/DSYMs
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/*.dSYM; do
-            cp -R "$f" build/DSYMs/
-          done
-          zip -r "./$OUTPUT_PATH/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          test -n "$ipa" || { echo "::error::IPA was not produced"; exit 1; }
+          cp "$ipa" "$GITHUB_WORKSPACE/dist/GoGram.ipa"
+          python3 - <<'PY'
+          import os,zipfile
+          p=os.environ['GITHUB_WORKSPACE']+'/dist/GoGram.ipa'
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None,'Corrupt IPA ZIP'
+              assert any(x.startswith('Payload/') and '.app/' in x for x in z.namelist()),'Not an IPA'
+          print('Verified GoGram.ipa:',os.path.getsize(p),'bytes')
+          PY
+      - name: Upload GoGram IPA
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: build-${{ env.BUILD_NUMBER }}
-          release_name: Telegram ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
-          body: |
-            An unsigned build of Telegram for iOS ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
-          draft: false
-          prerelease: false
-
-      - name: Upload Release IPA
-        id: upload-release-ipa 
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
-          asset_name: Telegram.ipa
-          asset_content_type: application/zip
-
-      - name: Upload Release DSYM
-        id: upload-release-dsym 
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.DSYMs.zip
-          asset_name: Telegram.DSYMs.zip
-          asset_content_type: application/zip
+          name: GoGram-iOS-IPA
+          path: dist/GoGram.ipa
+          if-no-files-found: error
+          retention-days: 14
