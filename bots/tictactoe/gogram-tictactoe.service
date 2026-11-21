@@ -1,0 +1,22 @@
+[Unit]
+Description=GoGram tic-tac-toe chat bot (.tt)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=gogram-bot
+Group=gogram-bot
+WorkingDirectory=/opt/gogram-tictactoe
+EnvironmentFile=/etc/gogram-tictactoe.env
+ExecStart=/usr/bin/python3 /opt/gogram-tictactoe/bot.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/gogram-tictactoe
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
