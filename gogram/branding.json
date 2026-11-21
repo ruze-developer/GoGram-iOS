@@ -1,0 +1,19 @@
+{
+  "general": {
+    "app_name": "GoGram",
+    "bundle_id": "cloud.play2go.gogram",
+    "url_scheme": "gogram",
+    "url_scheme_short": "gogram",
+    "app_specific_url_scheme": "gogram",
+    "host": "gogram.play2go.cloud"
+  },
+  "appstore": {
+    "is_appstore_build": "false",
+    "enable_siri": false,
+    "enable_icloud": false
+  },
+  "workarounds": {
+    "app_group_fallback": true,
+    "aps_environment_fallback": true
+  }
+}
