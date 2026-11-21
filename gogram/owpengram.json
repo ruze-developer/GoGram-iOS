@@ -1,0 +1,8 @@
+{
+  "host": "48.102.206.129",
+  "port": 2398,
+  "server_id": "owpengram",
+  "name": "GoGram / OwpenGram",
+  "description": "Private GoGram MTProto server",
+  "main_dc": null
+}
